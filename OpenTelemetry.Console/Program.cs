@@ -1,4 +1,6 @@
-﻿using OpenTelemetry.Metrics;
+﻿using Microsoft.Extensions.Logging;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using System.Diagnostics;
@@ -17,14 +19,18 @@ internal class Program
     
     private static readonly HttpClient s_httpClient = new();    
     private static readonly ActivitySource s_activitySource = new(AppName, Version);
+    private static readonly Meter meter = new (AppName, Version);
+    
     private static Counter<long> counter;
+    private static ILogger<Program> s_logger; 
     
     private static async Task Main(string[] args)
     {
         string url = args.Length > 0 ? args[0] : "http://numbersapi.com/random/math?json";
+        
+        var resourceBuilder = ResourceBuilder.CreateDefault().AddService(AppName, Version);
 
         // Initialize the OpenTelemetry TracerProvider.
-        var resourceBuilder = ResourceBuilder.CreateDefault().AddService(AppName, Version);
         _ = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resourceBuilder)
             .AddSource(AppName)
@@ -37,31 +43,44 @@ internal class Program
             .AddConsoleExporter()
             .AddJaegerExporter()
             .Build();
-        
-        var meter = new Meter(AppName, Version);
+
+        // Initialize the OpenTelemetry MeterProvider.
         _ = Sdk.CreateMeterProviderBuilder()
             .SetResourceBuilder(resourceBuilder)
             .AddConsoleExporter()
             .AddMeter(meter.Name)
             .Build();
-        counter = meter.CreateCounter<long>("SampleApp-counter");
-       
-        using var activity = s_activitySource.StartActivity(nameof(Main));
-        var response = await GetDataAsync(url);        
-        WriteLine(response);
+        counter = meter.CreateCounter<long>($"{AppName}-counter");
+
+        // Create a loggerFactory to get the logger.
+        using var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.AddOpenTelemetry(options => options.AddConsoleExporter());
+        });
+
+        s_logger = loggerFactory.CreateLogger<Program>();
+
+        using (var activity = s_activitySource.StartActivity(nameof(Main)))
+        {
+            var response = await GetDataAsync(url);
+            WriteLine(response);
+        }
+        
         ReadLine();
     }
 
     private static async Task<string> GetDataAsync(string url)
     {
+        s_logger.LogInformation($"Starting {nameof(GetDataAsync)}");
         using var activity = s_activitySource.StartActivity(nameof(GetDataAsync)); // Or MethodInfo.GetCurrentMethod().Name
-        activity?.AddTag("url", url);
+        activity?.SetTag("url", url);
         // Act like a request conuter. Counter will increment by 1 everytime the request is made.
         counter.Add(1);
         activity?.AddEvent(new ActivityEvent("Calling API."));
         var response = await s_httpClient.GetAsync(url);
         activity?.AddEvent(new ActivityEvent("Parsing response."));
         var content = await response.Content.ReadAsStringAsync();
+        s_logger.LogInformation($"Ending {nameof(GetDataAsync)}");
         return content;
     }
 
