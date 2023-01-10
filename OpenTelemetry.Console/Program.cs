@@ -29,15 +29,14 @@ internal class Program
         string url = args.Length > 0 ? args[0] : "http://numbersapi.com/random/math?json";
         
         var resourceBuilder = ResourceBuilder.CreateDefault().AddService(AppName, Version);
-
+        
         // Initialize the OpenTelemetry TracerProvider.
         _ = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resourceBuilder)
             .AddSource(AppName)
             .AddHttpClientInstrumentation(options =>
             {
-                options.Enrich = (activity, eventName, rawObject) =>
-                    AddEnrichment(activity, eventName, rawObject);
+                options.Enrich = AddEnrichment;
                 options.RecordException = true;
             })
             .AddConsoleExporter()
@@ -60,7 +59,7 @@ internal class Program
 
         s_logger = loggerFactory.CreateLogger<Program>();
 
-        using (var activity = s_activitySource.StartActivity(nameof(Main)))
+        using (var activity = s_activitySource.StartActivity())
         {
             var response = await GetDataAsync(url);
             WriteLine(response);
@@ -68,11 +67,11 @@ internal class Program
         
         ReadLine();
     }
-
+    
     private static async Task<string> GetDataAsync(string url)
     {
         s_logger.LogInformation($"Starting {nameof(GetDataAsync)}");
-        using var activity = s_activitySource.StartActivity(nameof(GetDataAsync)); // Or MethodInfo.GetCurrentMethod().Name
+        using var activity = s_activitySource.StartActivity();
         activity?.SetTag("url", url);
         // Act like a request conuter. Counter will increment by 1 everytime the request is made.
         counter.Add(1);
